@@ -1,0 +1,46 @@
+{
+  "interactions": [
+    {
+      "drug_a": "ibuprofen",
+      "drug_b": "lisinopril",
+      "severity": "moderate",
+      "note": "NSAIDs may reduce the effectiveness of ACE inhibitors and increase risk of kidney problems."
+    },
+    {
+      "drug_a": "warfarin",
+      "drug_b": "aspirin",
+      "severity": "severe",
+      "note": "Both are anticoagulants; combined use increases bleeding risk significantly."
+    },
+    {
+      "drug_a": "metformin",
+      "drug_b": "alcohol",
+      "severity": "moderate",
+      "note": "Alcohol may increase risk of lactic acidosis with metformin."
+    },
+    {
+      "drug_a": "sertraline",
+      "drug_b": "tramadol",
+      "severity": "moderate",
+      "note": "SSRIs with tramadol increase serotonin syndrome risk."
+    },
+    {
+      "drug_a": "amoxicillin",
+      "drug_b": "birth control",
+      "severity": "mild",
+      "note": "Antibiotics may reduce birth control efficacy."
+    },
+    {
+      "drug_a": "simvastatin",
+      "drug_b": "clarithromycin",
+      "severity": "severe",
+      "note": "Clarithromycin inhibits statin metabolism; increases myopathy risk."
+    },
+    {
+      "drug_a": "digoxin",
+      "drug_b": "potassium supplement",
+      "severity": "moderate",
+      "note": "High potassium levels can increase digoxin toxicity."
+    }
+  ]
+}
