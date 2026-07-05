@@ -1,8 +1,23 @@
-"""Security guardrails for the ADK agent."""
+"""Security guardrails for the ADK agent.
+
+Callback signatures here must match ADK's actual invocation contract
+(see google.adk.flows.llm_flows.base_llm_flow / functions.py), not a
+made-up dict-based interface — ADK calls these with specific keyword
+arguments and typed objects (LlmRequest/LlmResponse/BaseTool/ToolContext).
+"""
 
 import re
+import logging
 from typing import Optional, Any
+from google.genai import types
+from google.adk.agents.callback_context import CallbackContext
+from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
+from google.adk.tools.base_tool import BaseTool
+from google.adk.tools.tool_context import ToolContext
 from medmate.security.pii import redact_pii
+
+logger = logging.getLogger(__name__)
 
 
 class SafetyGuardrail:
@@ -39,83 +54,86 @@ class SafetyGuardrail:
         return self.SAFE_RESPONSE
 
 
+def _latest_user_text(llm_request: LlmRequest) -> str:
+    """Extract the text of the most recent user turn from an LlmRequest."""
+    for content in reversed(llm_request.contents or []):
+        if content.role == "user" and content.parts:
+            return "".join(part.text or "" for part in content.parts)
+    return ""
+
+
 class ADKCallbacks:
     """Callbacks for ADK agent security hooks."""
 
     def __init__(self):
         self.safety = SafetyGuardrail()
 
-    def before_model_callback(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Called before the model is invoked.
+    def before_model_callback(
+        self, callback_context: CallbackContext, llm_request: LlmRequest
+    ) -> Optional[LlmResponse]:
+        """Intercepts unsafe medical-advice requests; redacts PII otherwise.
 
-        Checks for unsafe medical advice requests and PII.
+        Returning an LlmResponse here short-circuits the actual model call.
+        Returning None lets the (possibly mutated) request proceed.
         """
-        messages = request.get("messages", [])
-        if not messages:
-            return request
+        user_text = _latest_user_text(llm_request)
+        if not user_text:
+            return None
 
-        # Get the latest user message
-        last_msg = messages[-1] if messages else {}
-        user_text = last_msg.get("content", "")
-
-        # Check for safety violations
         if self.safety.is_unsafe_request(user_text):
-            # Return a response that bypasses the model
-            request["_safety_intercept"] = True
-            request["_safety_response"] = self.safety.get_safe_response()
-            return request
+            return LlmResponse(
+                content=types.Content(
+                    role="model",
+                    parts=[types.Part(text=self.safety.get_safe_response())],
+                )
+            )
 
-        # Check for and redact PII
-        redacted, found = redact_pii(user_text)
-        if found:
-            # Log PII detection but don't block; allow the agent to proceed
-            # In production, you'd log this for audit purposes
-            request["_pii_detected"] = found
-            last_msg["content"] = redacted
+        # Redact PII in place so it never reaches the model/logs.
+        for content in reversed(llm_request.contents or []):
+            if content.role == "user" and content.parts:
+                for part in content.parts:
+                    if part.text:
+                        redacted, found = redact_pii(part.text)
+                        if found:
+                            logger.info(f"Redacted PII types: {found}")
+                            part.text = redacted
+                break
 
-        return request
+        return None
 
-    def before_tool_callback(self, tool_call: dict[str, Any]) -> dict[str, Any]:
-        """Called before a tool is executed.
+    def before_tool_callback(
+        self, tool: BaseTool, args: dict[str, Any], tool_context: ToolContext
+    ) -> Optional[dict]:
+        """Validates tool arguments before execution.
 
-        Validates tool arguments and requires confirmation for destructive operations.
+        Returning a dict here short-circuits actual tool execution and is
+        used as the tool's result. Returning None lets the tool run normally.
         """
-        tool_name = tool_call.get("name", "")
-        args = tool_call.get("arguments", {})
+        if tool.name == "remove_medication" and not args.get("name"):
+            return {"status": "error", "message": "Medication name required"}
+        return None
 
-        # Validate arguments exist
-        if not args:
-            tool_call["_validation_error"] = "No arguments provided"
-            return tool_call
+    def after_model_callback(
+        self, callback_context: CallbackContext, llm_response: LlmResponse
+    ) -> Optional[LlmResponse]:
+        """Appends a medical disclaimer to the model's final text response."""
+        if llm_response.partial:
+            # Skip streaming chunks; only annotate the final response.
+            return None
 
-        # For destructive tools (remove_medication), flag for confirmation
-        if tool_name == "remove_medication":
-            med_name = args.get("name")
-            if not med_name:
-                tool_call["_validation_error"] = "Medication name required"
-                return tool_call
-            tool_call["_requires_confirmation"] = True
-            tool_call["_confirmation_message"] = f"About to remove '{med_name}' from your medications. Is this correct?"
+        if not llm_response.content or not llm_response.content.parts:
+            return None
 
-        return tool_call
+        disclaimer = (
+            "\n\n---\n⚠️ **Important:** This tool is for personal organization "
+            "only, not medical advice. Always consult your healthcare provider "
+            "before making medication changes."
+        )
 
-    def after_model_callback(self, response: dict[str, Any]) -> dict[str, Any]:
-        """Called after the model generates a response.
+        annotated = False
+        for part in llm_response.content.parts:
+            if part.text:
+                part.text += disclaimer
+                annotated = True
 
-        Appends medical disclaimer and ensures safety messages are included.
-        """
-        # Append disclaimer to all model responses
-        disclaimer = "\n\n---\n⚠️ **Important:** This tool is for personal organization only, not medical advice. Always consult your healthcare provider before making medication changes."
-
-        content = response.get("content", "")
-        if isinstance(content, str):
-            response["content"] = content + disclaimer
-        elif isinstance(content, list):
-            # If content is a list of message parts
-            if content and isinstance(content[-1], dict):
-                if "text" in content[-1]:
-                    content[-1]["text"] += disclaimer
-            else:
-                response["content"].append({"type": "text", "text": disclaimer})
-
-        return response
+        return llm_response if annotated else None

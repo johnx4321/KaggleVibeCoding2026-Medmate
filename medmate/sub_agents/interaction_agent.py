@@ -11,11 +11,7 @@ def create_interaction_agent() -> LlmAgent:
     # For now, use a local function instead of full MCP integration
     # (will work without MCP server running)
     tools = [
-        FunctionTool(
-            func=check_interactions_local,
-            name="check_interactions",
-            description="Check for drug-drug interactions among medications",
-        ),
+        FunctionTool(func=check_interactions_local),
     ]
 
     instruction = """You are the Drug Interaction Specialist for MedMate.
@@ -30,7 +26,7 @@ When users ask about interactions, use the check_interactions tool.
 Always emphasize the importance of consulting healthcare professionals."""
 
     return LlmAgent(
-        name="Interaction Agent",
+        name="interaction_agent",
         instruction=instruction,
         model="gemini-2.0-flash",
         tools=tools,

@@ -25,11 +25,7 @@ def _create_root_agent() -> LlmAgent:
 
     # Root agent tools - minimal, mostly routing
     tools = [
-        FunctionTool(
-            func=profile_tools.get_profile,
-            name="get_profile",
-            description="Get the full user profile (medications, allergies, conditions)",
-        ),
+        FunctionTool(func=profile_tools.get_profile),
     ]
 
     instruction = """You are MedMate, a personal medication organizer and care assistant.
@@ -52,7 +48,7 @@ For user requests about medications, route to the appropriate sub-agent.
 Always be clear about your limitations and encourage consultation with healthcare providers."""
 
     root = LlmAgent(
-        name="MedMate Coordinator",
+        name="medmate_coordinator",
         instruction=instruction,
         model="gemini-2.0-flash",
         tools=tools,

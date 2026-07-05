@@ -15,8 +15,12 @@ logger = logging.getLogger(__name__)
 class DemoOrchestrator:
     """Routes messages to demo handlers without LLM."""
 
-    def __init__(self):
-        self.store = MemoryStore()
+    @property
+    def store(self) -> MemoryStore:
+        # Fresh instance per access: profile_tools.* also open their own
+        # MemoryStore per call, so a cached instance here would go stale
+        # the moment any tool call writes to the underlying file.
+        return MemoryStore()
 
     def process(self, user_input: str) -> str:
         """Process a user message and return a response."""
@@ -35,7 +39,7 @@ class DemoOrchestrator:
         if "allerg" in user_lower:
             return self._handle_allergy(user_input)
 
-        if "condition" in user_lower or "disease" in user_lower:
+        if any(kw in user_lower for kw in ["condition", "disease", "i have", "i've been diagnosed"]):
             return self._handle_condition(user_input)
 
         # Interaction checking
@@ -125,17 +129,30 @@ class DemoOrchestrator:
         )
         return f"📋 Your medications:\n{meds_text}"
 
+    def _extract_after_keyword(self, user_input: str, keywords: list[str]) -> Optional[str]:
+        """Extract the phrase following the first matching keyword (e.g. 'to', 'have', 'add')."""
+        words = user_input.split()
+        lower_words = [w.lower().strip(".,!?") for w in words]
+        for keyword in keywords:
+            if keyword in lower_words:
+                idx = lower_words.index(keyword)
+                if idx + 1 < len(words):
+                    value = " ".join(words[idx + 1 :]).strip(".,!?")
+                    if value:
+                        return value
+        return None
+
     def _handle_allergy(self, user_input: str) -> str:
         """Handle allergy questions/additions."""
-        if "add" in user_input.lower() or "have" in user_input.lower():
-            # Simple extraction
-            words = user_input.split()
-            if "allerg" in user_input.lower():
-                idx = next((i for i, w in enumerate(words) if "allerg" in w.lower()), -1)
-                if idx >= 0 and idx + 1 < len(words):
-                    allergy = " ".join(words[idx + 1 : idx + 3])
-                    result = profile_tools.add_allergy(allergy)
-                    return f"✓ {result['message']}"
+        lower = user_input.lower()
+        is_query = any(w in lower for w in ["what", "list", "show"])
+
+        if not is_query and "allerg" in lower:
+            # Prefer "allergic/allergy TO <name>" phrasing, then fall back to "have/add <name>"
+            allergy = self._extract_after_keyword(user_input, ["to", "have", "add"])
+            if allergy:
+                result = profile_tools.add_allergy(allergy)
+                return f"✓ {result['message']}"
 
         result = profile_tools.list_allergies()
         if not result["allergies"]:
@@ -145,19 +162,20 @@ class DemoOrchestrator:
 
     def _handle_condition(self, user_input: str) -> str:
         """Handle medical condition questions."""
-        if "add" in user_input.lower() or "have" in user_input.lower():
-            words = user_input.split()
-            if "condition" in user_input.lower() or "disease" in user_input.lower():
-                idx = next(
-                    (i for i, w in enumerate(words) if "condition" in w.lower() or "disease" in w.lower()),
-                    -1,
-                )
-                if idx >= 0 and idx + 1 < len(words):
-                    condition = " ".join(words[idx + 1 : idx + 3])
-                    result = profile_tools.add_condition(condition)
-                    return f"✓ {result['message']}"
+        lower = user_input.lower()
+        is_query = any(w in lower for w in ["what", "list", "show"])
 
-        return "Medical conditions are important for understanding your medication needs. Say 'I have [condition]' to record it."
+        if not is_query:
+            condition = self._extract_after_keyword(user_input, ["have", "with", "add"])
+            if condition:
+                result = profile_tools.add_condition(condition)
+                return f"✓ {result['message']}"
+
+        conditions = self.store.get_conditions()
+        if not conditions:
+            return "🏥 No medical conditions recorded. Say 'I have [condition]' to record one."
+        conditions_text = "\n".join([f"  • {c}" for c in conditions])
+        return f"🏥 Your medical conditions:\n{conditions_text}"
 
     def _handle_interactions(self) -> str:
         """Check for interactions among current medications."""

@@ -9,41 +9,13 @@ def create_intake_agent() -> LlmAgent:
     """Create the intake specialist agent."""
 
     tools = [
-        FunctionTool(
-            func=profile_tools.add_medication,
-            name="add_medication",
-            description="Add a medication to the user's profile",
-        ),
-        FunctionTool(
-            func=profile_tools.remove_medication,
-            name="remove_medication",
-            description="Remove a medication from the user's profile",
-        ),
-        FunctionTool(
-            func=profile_tools.list_medications,
-            name="list_medications",
-            description="List all medications in the user's profile",
-        ),
-        FunctionTool(
-            func=profile_tools.add_allergy,
-            name="add_allergy",
-            description="Record an allergy",
-        ),
-        FunctionTool(
-            func=profile_tools.list_allergies,
-            name="list_allergies",
-            description="List all recorded allergies",
-        ),
-        FunctionTool(
-            func=profile_tools.add_condition,
-            name="add_condition",
-            description="Record a medical condition",
-        ),
-        FunctionTool(
-            func=profile_tools.get_profile,
-            name="get_profile",
-            description="Get the full profile summary",
-        ),
+        FunctionTool(func=profile_tools.add_medication),
+        FunctionTool(func=profile_tools.remove_medication),
+        FunctionTool(func=profile_tools.list_medications),
+        FunctionTool(func=profile_tools.add_allergy),
+        FunctionTool(func=profile_tools.list_allergies),
+        FunctionTool(func=profile_tools.add_condition),
+        FunctionTool(func=profile_tools.get_profile),
     ]
 
     instruction = """You are the Intake Specialist for MedMate.
@@ -58,7 +30,7 @@ When users ask about adding or managing their medications, use the appropriate t
 Always confirm what you're doing and provide clear feedback."""
 
     return LlmAgent(
-        name="Intake Agent",
+        name="intake_agent",
         instruction=instruction,
         model="gemini-2.0-flash",
         tools=tools,

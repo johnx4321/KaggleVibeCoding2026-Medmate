@@ -9,9 +9,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from pathlib import Path
+from dotenv import load_dotenv
 
 from medmate.memory.store import MemoryStore
 from app.orchestrator_demo import DemoOrchestrator
+
+# Load environment variables from .env file
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -23,9 +27,36 @@ app = FastAPI(title="MedMate", description="Personal Medication & Care Assistant
 MEDMATE_MODE = os.getenv("MEDMATE_MODE", "demo").lower()
 logger.info(f"Starting MedMate in {MEDMATE_MODE.upper()} mode")
 
-# Initialize orchestrator for DEMO mode
-if MEDMATE_MODE == "demo":
-    demo_orchestrator = DemoOrchestrator()
+# Always initialize demo_orchestrator as fallback
+demo_orchestrator = DemoOrchestrator()
+
+# Initialize ADK agent + runner for LIVE mode if requested
+ADK_APP_NAME = "medmate"
+ADK_USER_ID = "demo_user"
+adk_runner = None
+adk_session_service = None
+adk_session_id = None
+if MEDMATE_MODE == "live":
+    try:
+        from google.adk import Runner
+        from google.adk.sessions import InMemorySessionService
+        from medmate.agent import get_root_agent
+
+        adk_agent = get_root_agent()
+        adk_session_service = InMemorySessionService()
+        adk_runner = Runner(
+            agent=adk_agent,
+            app_name=ADK_APP_NAME,
+            session_service=adk_session_service,
+        )
+        session = adk_session_service.create_session_sync(
+            app_name=ADK_APP_NAME, user_id=ADK_USER_ID
+        )
+        adk_session_id = session.id
+        logger.info(f"✅ ADK agent + runner initialized for LIVE mode (session={adk_session_id})")
+    except Exception as e:
+        logger.error(f"Failed to initialize ADK agent: {e}", exc_info=True)
+        logger.warning("Will fall back to DEMO mode for requests")
 
 
 class ChatMessage(BaseModel):
@@ -51,17 +82,50 @@ async def chat(request: ChatMessage) -> ChatResponse:
     if not user_input:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    response_mode = MEDMATE_MODE
     try:
-        if MEDMATE_MODE == "demo":
-            response = demo_orchestrator.process(user_input)
-        else:
-            # LIVE mode would use the actual ADK agent
-            response = "LIVE mode not configured. Set GOOGLE_API_KEY and MEDMATE_MODE=live"
+        if MEDMATE_MODE == "live" and adk_runner:
+            try:
+                from google.genai import types
 
-        return ChatResponse(response=response, mode=MEDMATE_MODE)
+                new_message = types.Content(role="user", parts=[types.Part(text=user_input)])
+                events = adk_runner.run(
+                    user_id=ADK_USER_ID,
+                    session_id=adk_session_id,
+                    new_message=new_message,
+                )
+
+                text_parts = []
+                event_error = None
+                for event in events:
+                    if getattr(event, "error_code", None):
+                        event_error = f"{event.error_code}: {getattr(event, 'error_message', '')}"
+                    content = getattr(event, "content", None)
+                    if content and getattr(content, "parts", None):
+                        for part in content.parts:
+                            if getattr(part, "text", None):
+                                text_parts.append(part.text)
+
+                if text_parts:
+                    response = "\n".join(text_parts)
+                    logger.info(f"✅ ADK agent response: {response[:100]}...")
+                else:
+                    # ADK's async Runner swallows model-call exceptions inside
+                    # its background thread rather than raising them here, so
+                    # an empty event stream must itself be treated as failure.
+                    raise RuntimeError(event_error or "LIVE agent returned no content")
+
+            except Exception as live_error:
+                logger.error(f"ADK agent error, falling back to DEMO mode: {live_error}", exc_info=True)
+                response = demo_orchestrator.process(user_input)
+                response_mode = f"demo (live call failed: {live_error})"
+        else:
+            response = demo_orchestrator.process(user_input)
+
+        return ChatResponse(response=response, mode=response_mode)
 
     except Exception as e:
-        logger.error(f"Error processing message: {e}")
+        logger.error(f"Error processing message: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

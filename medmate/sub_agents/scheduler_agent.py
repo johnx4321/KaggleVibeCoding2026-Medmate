@@ -9,21 +9,9 @@ def create_scheduler_agent() -> LlmAgent:
     """Create the scheduler specialist agent."""
 
     tools = [
-        FunctionTool(
-            func=schedule_tools.build_medication_schedule,
-            name="build_schedule",
-            description="Build a daily medication schedule from current medications",
-        ),
-        FunctionTool(
-            func=schedule_tools.get_next_doses,
-            name="get_next_doses",
-            description="Get upcoming doses in the next N hours",
-        ),
-        FunctionTool(
-            func=schedule_tools.export_schedule_ics,
-            name="export_schedule",
-            description="Export medication schedule as iCalendar format",
-        ),
+        FunctionTool(func=schedule_tools.build_medication_schedule),
+        FunctionTool(func=schedule_tools.get_next_doses),
+        FunctionTool(func=schedule_tools.export_schedule_ics),
     ]
 
     instruction = """You are the Scheduler Specialist for MedMate.
@@ -38,7 +26,7 @@ When users ask about their medication schedule or timing, use the scheduling too
 Always consider their daily routine and typical wake times."""
 
     return LlmAgent(
-        name="Scheduler Agent",
+        name="scheduler_agent",
         instruction=instruction,
         model="gemini-2.0-flash",
         tools=tools,
